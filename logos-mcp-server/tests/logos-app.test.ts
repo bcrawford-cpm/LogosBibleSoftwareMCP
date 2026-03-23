@@ -48,15 +48,30 @@ describe("logos-app", () => {
     });
   });
 
-  it("uses the Windows start command for Logos URLs", async () => {
+  it("uses rundll32 on Windows so query-string URLs bypass cmd parsing", async () => {
     platformMock.mockReturnValue("win32");
     const logosApp = await import("../src/services/logos-app.js");
 
-    await logosApp.searchBibleInLogos("grace alone");
+    await logosApp.searchAll("grace & peace");
 
     expect(execFileMock).toHaveBeenCalledWith(
-      "cmd",
-      ["/c", "start", "", "logos4:///Search?type=Bible&q=grace%20alone"],
+      "rundll32.exe",
+      ["url.dll,FileProtocolHandler", "logos4:///Search?kind=AllSearch&syntax=v2&q=grace%20%26%20peace"],
+      { windowsHide: true },
+      expect.any(Function)
+    );
+  });
+
+  it("uses the same Windows launcher for guide URLs with multiple query parameters", async () => {
+    platformMock.mockReturnValue("win32");
+    const logosApp = await import("../src/services/logos-app.js");
+
+    await logosApp.openGuide("Passage Guide", "Romans 8:28");
+
+    expect(execFileMock).toHaveBeenCalledWith(
+      "rundll32.exe",
+      ["url.dll,FileProtocolHandler", "logos4:///Guide?t=Passage%20Guide&ref=bible.Ro8.28"],
+      { windowsHide: true },
       expect.any(Function)
     );
   });
@@ -131,6 +146,7 @@ describe("logos-app", () => {
     await expect(logosApp.searchAll("grace")).resolves.toEqual({
       success: false,
       command: "logos4:///Search?kind=AllSearch&syntax=v2&q=grace",
+      launcher: "rundll32.exe",
       error: "start failed",
     });
   });

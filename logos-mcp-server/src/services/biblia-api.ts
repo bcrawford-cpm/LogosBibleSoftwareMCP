@@ -1,9 +1,97 @@
 import { BIBLIA_API_KEY, BIBLIA_API_BASE, DEFAULT_BIBLE } from "../config.js";
 import type { BibleTextResult, BibleSearchResult, BibleSearchHit, ScanResult, CompareResult, BibleInfo } from "../types.js";
 
+const CACHE_TTL_MS = 5 * 60 * 1000;
+const MAX_RETRIES = 2;
+
+type CacheEntry = {
+  expiresAt: number;
+  value: unknown;
+};
+
+const responseCache = new Map<string, CacheEntry>();
+
+export class BibliaApiError extends Error {
+  code: "missing_api_key" | "authentication_failed" | "rate_limited" | "network_error" | "service_unavailable" | "unexpected_response";
+  status?: number;
+  retryAfterSeconds?: number;
+
+  constructor(
+    code: BibliaApiError["code"],
+    message: string,
+    options: { status?: number; retryAfterSeconds?: number; cause?: unknown } = {}
+  ) {
+    super(message, options.cause ? { cause: options.cause } : undefined);
+    this.name = "BibliaApiError";
+    this.code = code;
+    this.status = options.status;
+    this.retryAfterSeconds = options.retryAfterSeconds;
+  }
+}
+
+function getCachedValue(cacheKey: string): unknown | undefined {
+  const cached = responseCache.get(cacheKey);
+  if (!cached) return undefined;
+  if (cached.expiresAt <= Date.now()) {
+    responseCache.delete(cacheKey);
+    return undefined;
+  }
+  return cached.value;
+}
+
+function setCachedValue(cacheKey: string, value: unknown): void {
+  responseCache.set(cacheKey, {
+    expiresAt: Date.now() + CACHE_TTL_MS,
+    value,
+  });
+}
+
+function cacheKeyFor(path: string, params: Record<string, string>): string {
+  const normalized = Object.entries(params)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, value]) => `${key}=${value}`)
+    .join("&");
+  return `${path}?${normalized}`;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function describeErrorBody(body: string): string {
+  const normalized = body.replace(/\s+/g, " ").trim();
+  if (!normalized) return "";
+  if (normalized.length <= 180) return normalized;
+  return `${normalized.slice(0, 177)}...`;
+}
+
+function parseRetryAfterSeconds(header: string | null): number | undefined {
+  if (!header) return undefined;
+  const seconds = Number(header);
+  if (Number.isFinite(seconds) && seconds >= 0) {
+    return seconds;
+  }
+  const retryAt = Date.parse(header);
+  if (Number.isNaN(retryAt)) return undefined;
+  return Math.max(0, Math.ceil((retryAt - Date.now()) / 1000));
+}
+
+function shouldRetry(status: number): boolean {
+  return status === 429 || status >= 500;
+}
+
 async function bibliaFetch(path: string, params: Record<string, string>): Promise<unknown> {
   if (!BIBLIA_API_KEY) {
-    throw new Error("BIBLIA_API_KEY is not set. Get a free key at https://bibliaapi.com");
+    throw new BibliaApiError(
+      "missing_api_key",
+      "BIBLIA_API_KEY is not set. Configure it to use Biblia-backed tools such as get_bible_text, search_bible, and get_cross_references."
+    );
+  }
+
+  const cacheKey = cacheKeyFor(path, params);
+  const cached = getCachedValue(cacheKey);
+  if (cached !== undefined) {
+    return cached;
   }
 
   const url = new URL(`${BIBLIA_API_BASE}${path}`);
@@ -12,17 +100,90 @@ async function bibliaFetch(path: string, params: Record<string, string>): Promis
     url.searchParams.set(k, v);
   }
 
-  const res = await fetch(url.toString());
-  if (!res.ok) {
-    const body = await res.text().catch(() => "");
-    throw new Error(`Biblia API error ${res.status}: ${body}`);
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt += 1) {
+    let res: Response;
+
+    try {
+      res = await fetch(url.toString());
+    } catch (error) {
+      if (attempt < MAX_RETRIES) {
+        await sleep(250 * 2 ** attempt);
+        continue;
+      }
+      throw new BibliaApiError(
+        "network_error",
+        "Could not reach the Biblia API. Check your internet connection and try again.",
+        { cause: error }
+      );
+    }
+
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      const detail = describeErrorBody(body);
+      const retryAfterSeconds = parseRetryAfterSeconds(res.headers.get("retry-after"));
+
+      if (res.status === 401 || res.status === 403) {
+        throw new BibliaApiError(
+          "authentication_failed",
+          detail
+            ? `Biblia API rejected the configured key (${res.status}). ${detail}`
+            : `Biblia API rejected the configured key (${res.status}). Verify BIBLIA_API_KEY and your Biblia account status.`,
+          { status: res.status }
+        );
+      }
+
+      if (res.status === 429) {
+        if (attempt < MAX_RETRIES) {
+          const delayMs = retryAfterSeconds ? retryAfterSeconds * 1000 : 500 * 2 ** attempt;
+          await sleep(delayMs);
+          continue;
+        }
+
+        throw new BibliaApiError(
+          "rate_limited",
+          retryAfterSeconds
+            ? `Biblia API rate limit exceeded. Retry after about ${retryAfterSeconds} seconds.`
+            : "Biblia API rate limit exceeded. Wait a moment and try again.",
+          { status: res.status, retryAfterSeconds }
+        );
+      }
+
+      if (res.status >= 500) {
+        if (attempt < MAX_RETRIES) {
+          await sleep(500 * 2 ** attempt);
+          continue;
+        }
+
+        throw new BibliaApiError(
+          "service_unavailable",
+          detail
+            ? `Biblia API is temporarily unavailable (${res.status}). ${detail}`
+            : `Biblia API is temporarily unavailable (${res.status}). Try again shortly.`,
+          { status: res.status }
+        );
+      }
+
+      throw new BibliaApiError(
+        "unexpected_response",
+        detail
+          ? `Biblia API error ${res.status}: ${detail}`
+          : `Biblia API error ${res.status}.`,
+        { status: res.status }
+      );
+    }
+
+    const contentType = res.headers.get("content-type") ?? "";
+    const payload = contentType.includes("application/json")
+      ? await res.json()
+      : await res.text();
+    setCachedValue(cacheKey, payload);
+    return payload;
   }
 
-  const contentType = res.headers.get("content-type") ?? "";
-  if (contentType.includes("application/json")) {
-    return res.json();
-  }
-  return res.text();
+  throw new BibliaApiError(
+    "service_unavailable",
+    "Biblia API request did not complete successfully."
+  );
 }
 
 export async function getBibleText(

@@ -45,6 +45,7 @@ export interface BibliaParseResult {
 export interface LogosCommandResult {
   success: boolean;
   command: string;
+  launcher?: string;
   error?: string;
 }
 

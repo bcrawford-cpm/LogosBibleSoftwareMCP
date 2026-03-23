@@ -1,6 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const searchCatalogMock = vi.hoisted(() => vi.fn(() => [{ resourceId: "LLS:COMM", title: "Romans Commentary", abbreviatedTitle: "Rom Comm", type: "text.monograph.commentary.bible", authors: "John Murray", subjects: "Romans", description: "Classic", publicationDate: "1959" }]));
+const getBibleTextMock = vi.hoisted(() => vi.fn(async (passage: string, bible?: string) => ({
+  passage,
+  bible: bible ?? "LEB",
+  text: "Sample passage text",
+})));
+const searchBibleMock = vi.hoisted(() => vi.fn(async (query: string) => ({
+  query,
+  resultCount: 1,
+  results: [{ title: "Romans 8:28", preview: "All things work together..." }],
+})));
 
 const mcpState = vi.hoisted(() => ({
   instances: [] as Array<{ tools: Array<{ name: string; description: string; schema: unknown; handler: (args: Record<string, unknown>) => Promise<unknown> }> }>,
@@ -29,21 +39,22 @@ vi.mock("@modelcontextprotocol/sdk/server/stdio.js", () => ({
 }));
 
 vi.mock("../src/config.js", () => ({
+  BIBLIA_API_KEY: "test-key",
   SERVER_NAME: "logos-bible",
   SERVER_VERSION: "1.0.0",
 }));
 
 vi.mock("../src/services/biblia-api.js", () => ({
-  getBibleText: vi.fn(async (passage: string, bible?: string) => ({
-    passage,
-    bible: bible ?? "LEB",
-    text: "Sample passage text",
-  })),
-  searchBible: vi.fn(async (query: string) => ({
-    query,
-    resultCount: 1,
-    results: [{ title: "Romans 8:28", preview: "All things work together..." }],
-  })),
+  BibliaApiError: class BibliaApiError extends Error {
+    code: string;
+
+    constructor(code: string, message: string) {
+      super(message);
+      this.code = code;
+    }
+  },
+  getBibleText: getBibleTextMock,
+  searchBible: searchBibleMock,
   scanReferences: vi.fn(async () => [{ passage: "John 3:16" }]),
   comparePassages: vi.fn(async () => ({
     equal: false,
@@ -68,7 +79,7 @@ vi.mock("../src/services/logos-app.js", () => ({
   openFactbook: vi.fn(async () => ({ success: true, command: "logos4:///Factbook?ref=Moses" })),
   openResource: vi.fn(async () => ({ success: true, command: "logosres:LLS:COMM" })),
   openGuide: vi.fn(async () => ({ success: true, command: "logos4:///Guide" })),
-  searchAll: vi.fn(async () => ({ success: false, command: "logos4:///Search", error: "Logos not running" })),
+  searchAll: vi.fn(async () => ({ success: false, command: "logos4:///Search", launcher: "rundll32.exe", error: "Logos not running" })),
 }));
 
 vi.mock("../src/services/reference-parser.js", () => ({
@@ -109,6 +120,8 @@ describe("index MCP registration", () => {
     vi.resetModules();
     mcpState.instances.length = 0;
     searchCatalogMock.mockClear();
+    getBibleTextMock.mockClear();
+    searchBibleMock.mockClear();
   });
 
   it("registers the full tool surface", async () => {
@@ -203,7 +216,21 @@ describe("index MCP registration", () => {
     const result = await tool.handler({ query: "grace" });
 
     expect(result).toEqual({
-      content: [{ type: "text", text: "Failed to open search: Logos not running" }],
+      content: [{ type: "text", text: "Failed to open search via rundll32.exe: Logos not running" }],
+      isError: true,
+    });
+  });
+
+  it("formats Biblia failures as tool errors instead of throwing", async () => {
+    getBibleTextMock.mockRejectedValueOnce(new Error("BIBLIA_API_KEY is not set. Configure it."));
+    const indexModule = await import("../src/index.js");
+
+    indexModule.createServer();
+    const tool = getRegisteredTool("get_bible_text");
+    const result = await tool.handler({ passage: "John 3:16" });
+
+    expect(result).toEqual({
+      content: [{ type: "text", text: "BIBLIA_API_KEY is not set. Configure it." }],
       isError: true,
     });
   });

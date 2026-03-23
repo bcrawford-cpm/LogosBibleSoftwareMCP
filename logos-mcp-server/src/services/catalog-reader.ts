@@ -107,6 +107,28 @@ export function typeLabel(type: string): string {
   return TYPE_LABELS[type] ?? type.split(".").pop() ?? type;
 }
 
+function normalizeForSearch(value: string | null | undefined): string {
+  return (value ?? "").trim().toLocaleLowerCase();
+}
+
+function matchScore(resource: CatalogResource, query?: string): number {
+  const normalizedQuery = normalizeForSearch(query);
+  if (!normalizedQuery) return 0;
+
+  const title = normalizeForSearch(resource.title);
+  const subjects = normalizeForSearch(resource.subjects);
+  const description = normalizeForSearch(resource.description);
+
+  let score = 0;
+  if (title === normalizedQuery) score += 500;
+  else if (title.startsWith(normalizedQuery)) score += 300;
+  else if (title.includes(normalizedQuery)) score += 225;
+
+  if (subjects.includes(normalizedQuery)) score += 175;
+  if (description.includes(normalizedQuery)) score += 75;
+  return score;
+}
+
 // ─── Search Catalog ─────────────────────────────────────────────────────────
 
 export function searchCatalog(options: {
@@ -118,8 +140,8 @@ export function searchCatalog(options: {
   const db = openDb(DB_PATHS.catalog);
   try {
     let sql = `
-      SELECT ResourceId, Title, AbbreviatedTitle, Type, Authors,
-             Subjects, Description, PublicationDate
+          SELECT ResourceId, Title, AbbreviatedTitle, Type, Authors,
+            Subjects, Description, PublicationDate, UseCount
       FROM Records
       WHERE Availability >= 1 AND IsDataset = 0
     `;
@@ -152,18 +174,31 @@ export function searchCatalog(options: {
       Subjects: string | null;
       Description: string | null;
       PublicationDate: string | null;
+      UseCount: number;
     }>;
 
-    return rows.map((r) => ({
-      resourceId: r.ResourceId,
-      title: r.Title,
-      abbreviatedTitle: r.AbbreviatedTitle,
-      type: r.Type,
-      authors: r.Authors,
-      subjects: r.Subjects,
-      description: stripXml(r.Description),
-      publicationDate: r.PublicationDate,
-    }));
+    return rows
+      .map((r) => ({
+        resource: {
+          resourceId: r.ResourceId,
+          title: r.Title,
+          abbreviatedTitle: r.AbbreviatedTitle,
+          type: r.Type,
+          authors: r.Authors,
+          subjects: r.Subjects,
+          description: stripXml(r.Description),
+          publicationDate: r.PublicationDate,
+        },
+        useCount: r.UseCount,
+      }))
+      .sort((left, right) => {
+        const scoreDiff = matchScore(right.resource, options.query) - matchScore(left.resource, options.query);
+        if (scoreDiff !== 0) return scoreDiff;
+        const useCountDiff = right.useCount - left.useCount;
+        if (useCountDiff !== 0) return useCountDiff;
+        return left.resource.title.localeCompare(right.resource.title);
+      })
+      .map((entry) => entry.resource);
   } finally {
     db.close();
   }

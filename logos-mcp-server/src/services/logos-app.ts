@@ -6,18 +6,25 @@ import type { LogosCommandResult } from "../types.js";
 
 const execFileAsync = promisify(execFile);
 
+function launcherForCurrentPlatform(): string {
+  return platform() === "win32" ? "rundll32.exe" : "open";
+}
+
 async function openUrl(url: string): Promise<LogosCommandResult> {
+  const launcher = launcherForCurrentPlatform();
   try {
     if (platform() === "win32") {
-      // Empty "" is the window-title argument that `start` requires
-      await execFileAsync("cmd", ["/c", "start", "", url]);
+      // Use the registered protocol handler directly so URLs with '&' are not parsed by cmd.exe.
+      await execFileAsync("rundll32.exe", ["url.dll,FileProtocolHandler", url], {
+        windowsHide: true,
+      });
     } else {
       await execFileAsync("open", [url]);
     }
-    return { success: true, command: url };
+    return { success: true, command: url, launcher };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    return { success: false, command: url, error: msg };
+    return { success: false, command: url, launcher, error: msg };
   }
 }
 
@@ -30,7 +37,7 @@ export async function navigateToPassage(reference: string): Promise<LogosCommand
     return openUrl(`logos4:///Bible/${logosRef}`);
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    return { success: false, command: `logos4:///Bible/...`, error: msg };
+    return { success: false, command: `logos4:///Bible/...`, launcher: launcherForCurrentPlatform(), error: msg };
   }
 }
 
@@ -69,7 +76,7 @@ export async function openResource(
     return openUrl(url);
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    return { success: false, command: `logosres:${resourceId}`, error: msg };
+    return { success: false, command: `logosres:${resourceId}`, launcher: launcherForCurrentPlatform(), error: msg };
   }
 }
 
@@ -83,7 +90,7 @@ export async function openGuide(
     return openUrl(`logos4:///Guide?t=${template}&ref=bible.${logosRef}`);
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    return { success: false, command: "", error: msg };
+    return { success: false, command: "", launcher: launcherForCurrentPlatform(), error: msg };
   }
 }
 

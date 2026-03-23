@@ -4,10 +4,10 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { pathToFileURL } from "url";
 import { z } from "zod";
-import { SERVER_NAME, SERVER_VERSION } from "./config.js";
+import { BIBLIA_API_KEY, SERVER_NAME, SERVER_VERSION } from "./config.js";
 
 // Service imports
-import { getBibleText, searchBible, scanReferences, comparePassages, getAvailableBibles } from "./services/biblia-api.js";
+import { BibliaApiError, getBibleText, searchBible, scanReferences, comparePassages, getAvailableBibles } from "./services/biblia-api.js";
 import { navigateToPassage, openWordStudy, openFactbook, openResource, openGuide, searchAll } from "./services/logos-app.js";
 import { expandRange } from "./services/reference-parser.js";
 import {
@@ -27,6 +27,54 @@ function text(s: string) {
 
 function err(s: string) {
   return { content: [{ type: "text" as const, text: s }], isError: true as const };
+}
+
+function logToolFailure(toolName: string, error: unknown, context: Record<string, unknown> = {}) {
+  const payload = {
+    level: "error",
+    tool: toolName,
+    message: error instanceof Error ? error.message : String(error),
+    context,
+  };
+  console.error(JSON.stringify(payload));
+}
+
+function formatBibliaFailure(error: BibliaApiError): string {
+  switch (error.code) {
+    case "missing_api_key":
+      return error.message;
+    case "authentication_failed":
+      return `${error.message} Biblia-backed tools require a valid BIBLIA_API_KEY.`;
+    case "rate_limited":
+      return error.message;
+    case "network_error":
+      return error.message;
+    case "service_unavailable":
+      return error.message;
+    default:
+      return error.message;
+  }
+}
+
+function formatToolFailure(error: unknown): string {
+  if (error instanceof BibliaApiError) {
+    return formatBibliaFailure(error);
+  }
+  return error instanceof Error ? error.message : String(error);
+}
+
+function withHandledErrors<TArgs extends Record<string, unknown>>(
+  toolName: string,
+  handler: (args: TArgs) => Promise<ReturnType<typeof text> | ReturnType<typeof err>>
+) {
+  return async (args: TArgs) => {
+    try {
+      return await handler(args);
+    } catch (error) {
+      logToolFailure(toolName, error, args);
+      return err(formatToolFailure(error));
+    }
+  };
 }
 
 export function registerTools(server: McpServer) {
@@ -52,10 +100,10 @@ export function registerTools(server: McpServer) {
       passage: z.string().describe("Bible reference (e.g., 'Genesis 1:1-5', 'John 3:16')"),
       bible: z.string().optional().describe("Bible version: LEB, KJV, ASV, DARBY, YLT, WEB"),
     },
-    async ({ passage, bible }) => {
+    withHandledErrors("get_bible_text", async ({ passage, bible }) => {
       const result = await getBibleText(passage, bible);
       return text(`**${result.passage}** (${result.bible})\n\n${result.text}`);
-    }
+    })
   );
 
   // ── 3. get_passage_context ───────────────────────────────────────────────
@@ -67,11 +115,11 @@ export function registerTools(server: McpServer) {
       context_verses: z.number().optional().describe("Verses before/after to include (default: 5)"),
       bible: z.string().optional().describe("Bible version (default: LEB)"),
     },
-    async ({ passage, context_verses, bible }) => {
+    withHandledErrors("get_passage_context", async ({ passage, context_verses, bible }) => {
       const expanded = expandRange(passage, context_verses ?? 5);
       const result = await getBibleText(expanded, bible);
       return text(`**${result.passage}** (${result.bible}) — context around ${passage}\n\n${result.text}`);
-    }
+    })
   );
 
   // ── 4. search_bible ──────────────────────────────────────────────────────
@@ -83,12 +131,12 @@ export function registerTools(server: McpServer) {
       limit: z.number().optional().describe("Max results (default: 20)"),
       bible: z.string().optional().describe("Bible version (default: LEB)"),
     },
-    async ({ query, limit, bible }) => {
+    withHandledErrors("search_bible", async ({ query, limit, bible }) => {
       const result = await searchBible(query, { limit, bible });
       if (result.resultCount === 0) return text(`No results for "${query}".`);
       const lines = result.results.map((r) => `**${r.title}**: ${r.preview}`);
       return text(`Found ${result.resultCount} results for "${query}":\n\n${lines.join("\n\n")}`);
-    }
+    })
   );
 
   // ── 5. get_cross_references ──────────────────────────────────────────────
@@ -99,7 +147,7 @@ export function registerTools(server: McpServer) {
       passage: z.string().describe("Bible reference (e.g., 'Romans 8:28')"),
       key_terms: z.string().optional().describe("Specific terms to search instead of auto-extracting"),
     },
-    async ({ passage, key_terms }) => {
+    withHandledErrors("get_cross_references", async ({ passage, key_terms }) => {
       let searchQuery: string;
       if (key_terms) {
         searchQuery = key_terms;
@@ -128,7 +176,7 @@ export function registerTools(server: McpServer) {
       if (filtered.length === 0) return text(`No cross-references found for ${passage}.`);
       const lines = filtered.map((r) => `**${r.title}**: ${r.preview}`);
       return text(`Cross-references for **${passage}**:\n\n${lines.join("\n\n")}`);
-    }
+    })
   );
 
   // ── 6. get_user_notes ────────────────────────────────────────────────────
@@ -274,7 +322,7 @@ export function registerTools(server: McpServer) {
       author: z.string().optional().describe("Filter by author name. Provide at least one of author, query, or type."),
       limit: z.number().optional().describe("Max results to return (default: 25)"),
     },
-    async ({ type, query, author, limit }) => {
+    withHandledErrors("get_library_catalog", async ({ type, query, author, limit }) => {
       const normalizedType = type?.trim() || undefined;
       const normalizedQuery = query?.trim() || undefined;
       const normalizedAuthor = author?.trim() || undefined;
@@ -290,7 +338,16 @@ export function registerTools(server: McpServer) {
           author: normalizedAuthor,
           limit: limit ?? 25,
         });
-        if (resources.length === 0) return text("No matching resources found in library catalog.");
+        if (resources.length === 0) {
+          const activeFilters = [
+            normalizedQuery ? `query="${normalizedQuery}"` : null,
+            normalizedType ? `type="${normalizedType}"` : null,
+            normalizedAuthor ? `author="${normalizedAuthor}"` : null,
+          ].filter(Boolean).join(", ");
+          return text(
+            `No matching resources found in library catalog for ${activeFilters}. Try broader keywords, a shorter author filter, or a resource type like commentary or lexicon.`
+          );
+        }
         const lines = resources.map((r) => {
           const authorStr = r.authors ? ` — ${r.authors}` : "";
           const label = typeLabel(r.type);
@@ -301,7 +358,7 @@ export function registerTools(server: McpServer) {
         const msg = e instanceof Error ? e.message : String(e);
         return err(`Library catalog error: ${msg}`);
       }
-    }
+    })
   );
 
   // ── 14. open_resource ─────────────────────────────────────────────────────
@@ -344,12 +401,12 @@ export function registerTools(server: McpServer) {
     {
       query: z.string().describe("Search query (e.g., 'justification by faith', 'baptism')"),
     },
-    async ({ query }) => {
+    withHandledErrors("search_all", async ({ query }) => {
       const result = await searchAll(query);
       return result.success
         ? text(`Opened Logos search for "${query}" across all resources.`)
-        : err(`Failed to open search: ${result.error}`);
-    }
+        : err(`Failed to open search via ${result.launcher ?? "the platform launcher"}: ${result.error}`);
+    })
   );
 
   // ── 17. scan_references ───────────────────────────────────────────────────
@@ -376,7 +433,7 @@ export function registerTools(server: McpServer) {
       first: z.string().describe("First Bible reference (e.g., 'Romans 8:28-30')"),
       second: z.string().describe("Second Bible reference (e.g., 'Romans 8:29')"),
     },
-    async ({ first, second }) => {
+    withHandledErrors("compare_passages", async ({ first, second }) => {
       const result = await comparePassages(first, second);
       const relations: string[] = [];
       if (result.equal) relations.push("equal");
@@ -386,7 +443,7 @@ export function registerTools(server: McpServer) {
       if (result.before) relations.push("first comes before second");
       if (result.after) relations.push("first comes after second");
       return text(`**${first}** vs **${second}**:\n${relations.join(", ") || "no relationship detected"}`);
-    }
+    })
   );
 
   // ── 19. get_available_bibles ──────────────────────────────────────────────
@@ -396,7 +453,7 @@ export function registerTools(server: McpServer) {
     {
       query: z.string().optional().describe("Optional search query to filter Bible versions"),
     },
-    async ({ query }) => {
+    withHandledErrors("get_available_bibles", async ({ query }) => {
       const bibles = await getAvailableBibles(query);
       if (bibles.length === 0) return text("No Bible versions found.");
       const lines = bibles.map((b) => {
@@ -404,7 +461,7 @@ export function registerTools(server: McpServer) {
         return `- **${b.title}** (\`${b.bible}\`)${langs}`;
       });
       return text(`Found ${bibles.length} Bible versions:\n\n${lines.join("\n")}`);
-    }
+    })
   );
 
   // ── 20. get_resource_types ────────────────────────────────────────────────
@@ -509,6 +566,11 @@ export function registerTools(server: McpServer) {
 }
 
 export function createServer(): McpServer {
+  if (!BIBLIA_API_KEY) {
+    console.warn(
+      "Biblia-backed tools are disabled until BIBLIA_API_KEY is configured. Local Logos tools will still work."
+    );
+  }
   const server = new McpServer({ name: SERVER_NAME, version: SERVER_VERSION });
   registerTools(server);
   return server;

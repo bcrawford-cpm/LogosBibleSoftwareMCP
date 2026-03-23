@@ -306,4 +306,25 @@ describe("sqlite reader integration", () => {
       { label: "Commentary", count: 2 },
     ]);
   });
+
+  it("prefers exact and title-focused query matches over pure title sorting", async () => {
+    createDb(
+      dbPaths.catalog,
+      [],
+      [
+        {
+          sql: "INSERT INTO Records VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          params: ["LLS:LEX1", "Romans", "Romans", "text.monograph.dictionary", "Jane Doe", "Romans, Pauline theology", "<p>Dictionary article</p>", "2001", 1, 0, 1],
+        },
+      ]
+    );
+
+    const catalogReader = await import("../src/services/catalog-reader.js");
+    const results = catalogReader.searchCatalog({ query: "Romans" });
+
+    expect(results[0]).toMatchObject({
+      resourceId: "LLS:LEX1",
+      title: "Romans",
+    });
+  });
 });

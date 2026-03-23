@@ -9,6 +9,15 @@ Works with **Claude Code**, **LM Studio**, **VS Code + GitHub Copilot**, **Claud
 - **22 MCP tools** that let your AI assistant read Bible text, search Scripture, navigate Logos, access your notes/highlights/favorites, check reading plans, explore word studies and factbook entries, search your library catalog, open commentaries and lexicons, run cross-resource searches, and read text from open resource panels
 - **A Socratic Bible Study agent** (Claude Code only) that guides you through Scripture using questions (not lectures), welcoming any denominational background, with four questioning layers: Observation, Interpretation, Correlation, and Application
 
+## Tool Requirements
+
+| Tool group | Requires Logos desktop data | Requires Logos UI | Requires `BIBLIA_API_KEY` |
+|------------|-----------------------------|-------------------|---------------------------|
+| `navigate_passage`, `open_word_study`, `open_factbook`, `open_resource`, `open_guide`, `search_all` | No | Yes | No |
+| `get_user_notes`, `get_user_highlights`, `get_favorites`, `get_reading_progress`, `get_study_workflows`, `get_library_catalog`, `get_resource_types`, `get_resource_references` | Yes | No | No |
+| `get_bible_text`, `get_passage_context`, `search_bible`, `get_cross_references`, `compare_passages`, `get_available_bibles`, `scan_references` | No | No | Yes |
+| `get_resource_text` | No | Yes | No |
+
 ## Prerequisites
 
 | Requirement | Details |
@@ -224,6 +233,17 @@ See [Cursor MCP docs](https://docs.cursor.com/context/model-context-protocol) fo
 BIBLIA_API_KEY=your_api_key_here
 ```
 
+### 6. Rebuild after source changes
+
+LM Studio, Claude Desktop, and other MCP clients launch the built server entrypoint, not the TypeScript source files.
+
+```bash
+cd logos-mcp-server
+npm run build
+```
+
+If you change anything under `src/`, rebuild before retesting the MCP server in your client.
+
 ## Available Tools
 
 ### Bible Text & Reading
@@ -256,6 +276,40 @@ Tools for searching Bible text and library resources
 | `get_cross_references` | Finds related passages by extracting key terms |
 | `scan_references` | Finds Bible references embedded in arbitrary text |
 | `search_all` | Searches across ALL resources in your library (not just Bible text) |
+
+## Troubleshooting
+
+### Windows: `search_all` or `open_guide` fails with a shell syntax error
+
+Symptoms often look like Windows trying to interpret part of a Logos URL query string as a command, especially when the URL contains multiple query parameters.
+
+Checks:
+
+1. Rebuild the server with `npm run build` so your MCP client is using the latest launcher logic.
+2. Confirm Logos is installed and the `logos4:` protocol is still registered on Windows.
+3. Retry a simple UI tool such as `open_factbook` or `navigate_passage` to confirm the protocol handler works at all.
+
+### Biblia-backed tools return 403 or authentication failures
+
+Affected tools include `get_bible_text`, `get_passage_context`, `search_bible`, `get_cross_references`, `compare_passages`, `get_available_bibles`, and `scan_references`.
+
+Checks:
+
+1. Confirm `BIBLIA_API_KEY` is present in your MCP client configuration.
+2. Restart the MCP client after editing the environment variables.
+3. Verify the key is still valid at [bibliaapi.com](https://bibliaapi.com/).
+4. If you hit rate limits, wait and retry instead of repeatedly sending the same request.
+
+### `get_library_catalog` returns no matches
+
+The library catalog tool searches your local Logos `catalog.db` directly. Zero results do not necessarily mean Logos needs to rebuild an index.
+
+Try:
+
+1. Broader keywords before combining multiple filters.
+2. An author-only search to confirm the database is being read.
+3. A type filter such as `commentary`, `lexicon`, or `dictionary`.
+4. Setting `LOGOS_CATALOG_DIR` explicitly if your Logos data is installed in a non-default location.
 
 ### Library & Resources
 Tools for browsing your owned library catalog
