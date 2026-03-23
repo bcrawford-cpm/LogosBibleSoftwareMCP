@@ -137,6 +137,20 @@ export interface ResourceTypeSummary {
   count: number;
 }
 
+export interface ResourceMilestone {
+  category: "Reference" | "Headword";
+  type: string;       // e.g., "bible", "bible+esv", "page", "vnp", "dayofyear", "en"
+  priority: number;
+}
+
+export interface ResourceReferenceInfo {
+  resourceId: string;
+  title: string;
+  type: string;
+  milestones: ResourceMilestone[];
+  referenceSupersets: string | null;  // e.g., "bible.1.1.1-3.27.34"
+}
+
 // ─── Biblia Scan / Compare / Find Types ─────────────────────────────────────
 
 export interface ScanResult {

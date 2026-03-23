@@ -357,3 +357,5 @@ export function expandRange(input: string, contextVerses: number = 5): string {
 
   return `${ref.book} ${ref.chapter}:${startVerse}-${endChapter === ref.chapter ? "" : `${endChapter}:`}${endVerse}`;
 }
+
+

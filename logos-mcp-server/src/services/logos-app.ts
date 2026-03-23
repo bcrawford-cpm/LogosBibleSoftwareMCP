@@ -1,4 +1,5 @@
 import { execFile } from "child_process";
+import { platform } from "os";
 import { promisify } from "util";
 import { toLogosUrlRef } from "./reference-parser.js";
 import type { LogosCommandResult } from "../types.js";
@@ -7,7 +8,12 @@ const execFileAsync = promisify(execFile);
 
 async function openUrl(url: string): Promise<LogosCommandResult> {
   try {
-    await execFileAsync("open", [url]);
+    if (platform() === "win32") {
+      // Empty "" is the window-title argument that `start` requires
+      await execFileAsync("cmd", ["/c", "start", "", url]);
+    } else {
+      await execFileAsync("open", [url]);
+    }
     return { success: true, command: url };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -15,9 +21,17 @@ async function openUrl(url: string): Promise<LogosCommandResult> {
   }
 }
 
+/**
+ * Navigates to a Bible passage in Logos.
+ */
 export async function navigateToPassage(reference: string): Promise<LogosCommandResult> {
-  const logosRef = toLogosUrlRef(reference);
-  return openUrl(`logos4:///Bible/${logosRef}`);
+  try {
+    const logosRef = toLogosUrlRef(reference);
+    return openUrl(`logos4:///Bible/${logosRef}`);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return { success: false, command: `logos4:///Bible/...`, error: msg };
+  }
 }
 
 export async function searchBibleInLogos(query: string): Promise<LogosCommandResult> {
@@ -35,6 +49,11 @@ export async function openFactbook(topic: string): Promise<LogosCommandResult> {
   return openUrl(`logos4:///Factbook?ref=${encoded}`);
 }
 
+/**
+ * Opens a resource in Logos with an optional reference.
+ * The reference should be in Logos milestone format (e.g., 'bible.24.1.1', 'page.271').
+ * Use getResourceReferenceInfo() to discover valid reference types for a given resource.
+ */
 export async function openResource(
   resourceId: string,
   reference?: string
@@ -42,10 +61,11 @@ export async function openResource(
   try {
     const encodedId = encodeURIComponent(resourceId);
     let url = `logosres:${encodedId}`;
+    
     if (reference) {
-      const logosRef = toLogosUrlRef(reference);
-      url += `;ref=bible.${logosRef}`;
+      url += `;ref=${encodeURIComponent(reference)}`;
     }
+    
     return openUrl(url);
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -74,11 +94,18 @@ export async function searchAll(query: string): Promise<LogosCommandResult> {
 
 export async function isLogosRunning(): Promise<boolean> {
   try {
-    const { stdout } = await execFileAsync("osascript", [
-      "-e",
-      'tell application "System Events" to (name of processes) contains "Logos"',
-    ]);
-    return stdout.trim() === "true";
+    if (platform() === "win32") {
+      const { stdout } = await execFileAsync("tasklist", [
+        "/FI", "IMAGENAME eq Logos.exe", "/NH",
+      ]);
+      return stdout.toLowerCase().includes("logos.exe");
+    } else {
+      const { stdout } = await execFileAsync("osascript", [
+        "-e",
+        'tell application "System Events" to (name of processes) contains "Logos"',
+      ]);
+      return stdout.trim() === "true";
+    }
   } catch {
     return false;
   }

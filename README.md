@@ -1,20 +1,22 @@
 # Logos Bible Software MCP Server + Socratic Bible Study Agent
 
-A [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server that connects [Claude Code](https://docs.anthropic.com/en/docs/claude-code) to [Logos Bible Software](https://www.logos.com/), plus a custom Socratic Bible study agent that uses these tools for guided theological dialogue.
+A [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server that connects any MCP-compatible AI frontend to [Logos Bible Software](https://www.logos.com/), plus a custom Socratic Bible study agent for guided theological dialogue.
+
+Works with **Claude Code**, **LM Studio**, **VS Code + GitHub Copilot**, **Claude Desktop**, **Cursor**, and [100+ other MCP clients](https://modelcontextprotocol.io/clients).
 
 ## What This Does
 
-- **20 MCP tools** that let Claude read Bible text, search Scripture, navigate Logos, access your notes/highlights/favorites, check reading plans, explore word studies and factbook entries, search your library catalog, open commentaries and lexicons, and run cross-resource searches
-- **A Socratic Bible Study agent** that guides you through Scripture using questions (not lectures), welcoming any denominational background, with four questioning layers: Observation, Interpretation, Correlation, and Application
+- **22 MCP tools** that let your AI assistant read Bible text, search Scripture, navigate Logos, access your notes/highlights/favorites, check reading plans, explore word studies and factbook entries, search your library catalog, open commentaries and lexicons, run cross-resource searches, and read text from open resource panels
+- **A Socratic Bible Study agent** (Claude Code only) that guides you through Scripture using questions (not lectures), welcoming any denominational background, with four questioning layers: Observation, Interpretation, Correlation, and Application
 
 ## Prerequisites
 
 | Requirement | Details |
 |-------------|---------|
-| **macOS** | Required (uses macOS `open` command and AppleScript for Logos integration) |
-| **Logos Bible Software** | Installed at `/Applications/Logos.app` (tested with v48) |
+| **Windows or macOS** | Both platforms supported |
+| **Logos Bible Software** | Installed and signed in (tested with v48) |
 | **Node.js** | v18+ (v23+ recommended for native `fetch` support) |
-| **Claude Code** | Anthropic's CLI tool ([install guide](https://docs.anthropic.com/en/docs/claude-code)) |
+| **An MCP client** | Claude Code, LM Studio, VS Code + Copilot, Claude Desktop, Cursor, or any [MCP-compatible app](https://modelcontextprotocol.io/clients) |
 | **Biblia API Key** | Free key from [bibliaapi.com](https://bibliaapi.com/) |
 
 ## Setup
@@ -41,7 +43,16 @@ cd ..
 2. Sign up for a free account
 3. Copy your API key
 
-### 4. Create `.mcp.json` in the project root
+### 4. Configure your MCP client
+
+Choose your client below. Each needs the path to the built server and your Biblia API key.
+
+> **Path note:** Claude Code and VS Code use project-relative paths (since config lives in the project). LM Studio, Claude Desktop, and Cursor use **absolute paths** (since config is global). Replace `/absolute/path/to/LogosInteraction` with your actual project path.
+
+<details>
+<summary><strong>Claude Code</strong></summary>
+
+Create `.mcp.json` in the project root:
 
 ```json
 {
@@ -57,19 +68,161 @@ cd ..
 }
 ```
 
+Verify: run `claude`, then type `/mcp` to check that the "logos" server appears with 22 tools.
+
+</details>
+
+<details>
+<summary><strong>LM Studio</strong></summary>
+
+Requires LM Studio **v0.3.17+** ([download](https://lmstudio.ai/download)).
+
+1. Open LM Studio
+2. Go to the **Program** tab in the right sidebar
+3. Click **Install > Edit mcp.json**
+4. Add the logos server entry:
+
+**Windows:**
+
+```json
+{
+  "mcpServers": {
+    "logos": {
+      "command": "node",
+      "args": ["C:\\Users\\YOUR_USER\\path\\to\\LogosInteraction\\logos-mcp-server\\dist\\index.js"],
+      "env": {
+        "BIBLIA_API_KEY": "your_api_key_here"
+      }
+    }
+  }
+}
+```
+
+**macOS:**
+
+```json
+{
+  "mcpServers": {
+    "logos": {
+      "command": "node",
+      "args": ["/Users/YOUR_USER/path/to/LogosInteraction/logos-mcp-server/dist/index.js"],
+      "env": {
+        "BIBLIA_API_KEY": "your_api_key_here"
+      }
+    }
+  }
+}
+```
+
+5. Save the file — LM Studio will auto-load the server
+6. The 22 tools will appear when you start a chat with a tool-capable model
+
+The `mcp.json` file lives at:
+- **macOS/Linux:** `~/.lmstudio/mcp.json`
+- **Windows:** `%USERPROFILE%\.lmstudio\mcp.json`
+
+See [LM Studio MCP docs](https://lmstudio.ai/docs/app/mcp) for more details.
+
+</details>
+
+<details>
+<summary><strong>VS Code + GitHub Copilot</strong></summary>
+
+Create `.vscode/mcp.json` in the project root:
+
+```json
+{
+  "servers": {
+    "logos": {
+      "command": "node",
+      "args": ["logos-mcp-server/dist/index.js"],
+      "env": {
+        "BIBLIA_API_KEY": "your_api_key_here"
+      }
+    }
+  }
+}
+```
+
+The tools will be available in Copilot's agent mode (Ctrl+Alt+I).
+
+See [VS Code MCP docs](https://code.visualstudio.com/docs/copilot/chat/mcp-servers) for more details.
+
+</details>
+
+<details>
+<summary><strong>Claude Desktop</strong></summary>
+
+Edit the config file at:
+- **macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`
+- **Windows:** `%APPDATA%\Claude\claude_desktop_config.json`
+
+Add (or merge into existing config):
+
+**Windows:**
+
+```json
+{
+  "mcpServers": {
+    "logos": {
+      "command": "node",
+      "args": ["C:\\Users\\YOUR_USER\\path\\to\\LogosInteraction\\logos-mcp-server\\dist\\index.js"],
+      "env": {
+        "BIBLIA_API_KEY": "your_api_key_here"
+      }
+    }
+  }
+}
+```
+
+**macOS:**
+
+```json
+{
+  "mcpServers": {
+    "logos": {
+      "command": "node",
+      "args": ["/Users/YOUR_USER/path/to/LogosInteraction/logos-mcp-server/dist/index.js"],
+      "env": {
+        "BIBLIA_API_KEY": "your_api_key_here"
+      }
+    }
+  }
+}
+```
+
+Restart Claude Desktop after editing. See [Claude Desktop MCP docs](https://support.claude.com/en/articles/10949351-getting-started-with-local-mcp-servers-on-claude-desktop) for more details.
+
+</details>
+
+<details>
+<summary><strong>Cursor</strong></summary>
+
+Create `.cursor/mcp.json` in the project root (or `~/.cursor/mcp.json` for global access):
+
+```json
+{
+  "mcpServers": {
+    "logos": {
+      "command": "node",
+      "args": ["logos-mcp-server/dist/index.js"],
+      "env": {
+        "BIBLIA_API_KEY": "your_api_key_here"
+      }
+    }
+  }
+}
+```
+
+See [Cursor MCP docs](https://docs.cursor.com/context/model-context-protocol) for more details.
+
+</details>
+
 ### 5. Create `.env` in the project root (optional, for development)
 
 ```
 BIBLIA_API_KEY=your_api_key_here
 ```
-
-### 6. Verify it works
-
-```bash
-claude
-```
-
-Once Claude Code starts, type `/mcp` to check that the "logos" server appears with 20 tools.
 
 ## Available Tools
 
@@ -111,6 +264,10 @@ Tools for browsing your owned library catalog
 |------|-------------|
 | `get_library_catalog` | Searches your owned resources (commentaries, lexicons, etc.) by type, author, or keyword |
 | `get_resource_types` | Shows a summary of resource types and counts in your library |
+| `get_resource_references` | Returns the available reference/navigation types (milestones) for a resource |
+| `get_resource_text` | ⚠️ **Experimental** — Reads the visible text from a resource panel open in Logos (Windows only; see note below) |
+
+> **⚠️ `get_resource_text` is experimental.** Logos resource files are encrypted and there is no official API for reading resource text. This tool is a makeshift workaround that uses the Windows UI Automation accessibility API to scrape text from whatever is currently rendered on screen in an open Logos panel. It has significant limitations: it only captures visible/rendered text (~2,000 chars per screenful), scrolling requires bringing Logos to the foreground and sending keystrokes, text is plain with no structure, and it will not work on macOS. Use `open_resource` to navigate to the desired section first, then call this tool to read what's showing.
 
 ### Personal Study Data
 Tools for accessing your notes, highlights, favorites, and reading progress
@@ -129,7 +286,7 @@ Tools for structured study paths
 |------|-------------|
 | `get_study_workflows` | Lists available study workflow templates and active instances |
 
-## Using the Socratic Bible Study Agent
+## Using the Socratic Bible Study Agent (Claude Code only)
 
 Start Claude Code in the project directory, then:
 
@@ -157,20 +314,22 @@ The agent will ask what you want to study and guide you through Scripture using 
 LogosInteraction/
 ├── .claude/
 │   └── agents/
-│       └── socratic-bible-study.md    # Socratic agent definition
-├── .mcp.json                          # MCP server config (you create this)
+│       └── socratic-bible-study.md    # Socratic agent definition (Claude Code)
+├── .mcp.json                          # Claude Code MCP config (you create this)
+├── .vscode/
+│   └── mcp.json                       # VS Code + Copilot MCP config (you create this)
 ├── .env                               # API key (you create this)
 ├── logos-mcp-server/
 │   ├── package.json
 │   ├── tsconfig.json
 │   ├── src/
-│   │   ├── index.ts                   # MCP server entry point (20 tools)
+│   │   ├── index.ts                   # MCP server entry point (22 tools)
 │   │   ├── config.ts                  # Paths, API config, constants
 │   │   ├── types.ts                   # Shared TypeScript types
 │   │   └── services/
 │   │       ├── reference-parser.ts    # Bible reference normalization
 │   │       ├── biblia-api.ts          # Biblia.com REST API client
-│   │       ├── logos-app.ts           # macOS URL scheme / AppleScript
+│   │       ├── logos-app.ts           # Cross-platform URL scheme & process detection
 │   │       ├── sqlite-reader.ts       # Read-only Logos SQLite access
 │   │       └── catalog-reader.ts     # Library catalog search (catalog.db)
 │   └── dist/                          # Built output (after npm run build)
@@ -181,44 +340,42 @@ LogosInteraction/
 The MCP server integrates with Logos through three channels:
 
 - **Biblia API** - Retrieves Bible text and search results via the free REST API from Faithlife (same company as Logos)
-- **macOS URL schemes** - Opens passages, word studies, and factbook entries directly in the Logos app using `logos4:///` URLs
+- **URL schemes** - Opens passages, word studies, and factbook entries directly in the Logos app using `logos4:///` URLs (uses `open` on macOS, `start` on Windows)
 - **SQLite databases** - Reads your personal data (notes, highlights, favorites, workflows, reading plans) and library catalog directly from the Logos local database files (read-only access, never modifies your data)
+- **Windows UI Automation** *(experimental)* - `get_resource_text` uses the Windows accessibility API to scrape rendered text from open resource panels. Logos resource files are proprietary and encrypted, so there is no supported way to read their content programmatically — this is a makeshift workaround with real limitations (Windows-only, visible text only, requires Logos to be in the foreground for multi-page reads)
 
 ## Logos Data Path
 
-The server expects Logos data at:
+The server auto-detects your Logos data directory on both platforms:
 
-```
-~/Library/Application Support/Logos4/Documents/a3wo155q.w14/
-```
+| Platform | Default location |
+|----------|------------------|
+| **macOS** | `~/Library/Application Support/Logos4/Documents/{user-hash}/` |
+| **Windows** | `%LOCALAPPDATA%\Logos\Documents\{user-hash}\` |
 
-If your Logos data is at a different path, set the `LOGOS_DATA_DIR` environment variable in `.mcp.json`. The library catalog lives under `Data/` (not `Documents/`) — set `LOGOS_CATALOG_DIR` if your catalog path differs:
+The user-hash folder is discovered automatically. If auto-detection cannot find a unique match or you need a custom path, set `LOGOS_DATA_DIR` and/or `LOGOS_CATALOG_DIR` in the `env` block of your MCP client's config:
 
 ```json
-{
-  "mcpServers": {
-    "logos": {
-      "command": "node",
-      "args": ["logos-mcp-server/dist/index.js"],
-      "env": {
-        "BIBLIA_API_KEY": "your_key",
-        "LOGOS_DATA_DIR": "/path/to/your/Logos4/Documents/xxxx.w14",
-        "LOGOS_CATALOG_DIR": "/path/to/your/Logos4/Data/xxxx.w14"
-      }
-    }
-  }
+"env": {
+  "BIBLIA_API_KEY": "your_key",
+  "LOGOS_DATA_DIR": "/path/to/your/Logos/Documents/xxxx",
+  "LOGOS_CATALOG_DIR": "/path/to/your/Logos/Data/xxxx"
 }
 ```
 
 ## Troubleshooting
 
-**"BIBLIA_API_KEY is not set"** - Make sure your `.mcp.json` has the `env` block with your API key.
+**"BIBLIA_API_KEY is not set"** - Make sure your MCP config has the `env` block with your API key.
 
-**"Database not found"** - Your Logos data path may differ. Run `find ~/Library/Application\ Support/Logos4 -name "*.db" -maxdepth 5` to find your databases and update `LOGOS_DATA_DIR`.
+**"Database not found"** - Your Logos data path may differ. The server auto-detects the user-hash folder, but if detection cannot find a unique match, find your databases manually and set `LOGOS_DATA_DIR`:
+- **macOS:** `find ~/Library/Application\ Support/Logos4 -name "*.db" -maxdepth 5`
+- **Windows (PowerShell):** `Get-ChildItem "$env:LOCALAPPDATA\Logos" -Recurse -Filter *.db | Select-Object FullName`
 
-**Tools don't appear in `/mcp`** - Restart Claude Code. The MCP server is loaded at startup from `.mcp.json`.
+**Tools don't appear** - Restart your MCP client. MCP servers are loaded at startup from the config file. For LM Studio, re-save the `mcp.json` file to trigger a reload.
 
 **Logos doesn't open passages** - Make sure Logos Bible Software is running before using `navigate_passage`, `open_word_study`, or `open_factbook`.
+
+**LM Studio: tools use too many tokens** - Some MCP tools return large responses. If you hit context overflow, try using a model with a larger context window, or ask for shorter/specific passages.
 
 ## License
 

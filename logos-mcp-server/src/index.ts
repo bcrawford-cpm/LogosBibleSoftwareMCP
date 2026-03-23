@@ -2,6 +2,7 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { pathToFileURL } from "url";
 import { z } from "zod";
 import { SERVER_NAME, SERVER_VERSION } from "./config.js";
 
@@ -17,7 +18,8 @@ import {
   getReadingProgress,
   getUserNotes,
 } from "./services/sqlite-reader.js";
-import { searchCatalog, getResourceTypeSummary, typeLabel } from "./services/catalog-reader.js";
+import { searchCatalog, getResourceTypeSummary, typeLabel, getResourceReferenceInfo } from "./services/catalog-reader.js";
+import { readResourceText } from "./services/ui-automation-reader.js";
 
 function text(s: string) {
   return { content: [{ type: "text" as const, text: s }] };
@@ -27,8 +29,7 @@ function err(s: string) {
   return { content: [{ type: "text" as const, text: s }], isError: true as const };
 }
 
-async function main() {
-  const server = new McpServer({ name: SERVER_NAME, version: SERVER_VERSION });
+export function registerTools(server: McpServer) {
 
   // ── 1. navigate_passage ──────────────────────────────────────────────────
   server.tool(
@@ -266,16 +267,29 @@ async function main() {
   // ── 13. get_library_catalog ─────────────────────────────────────────────
   server.tool(
     "get_library_catalog",
-    "Search the user's Logos library catalog for owned resources by type, author, or keyword",
+    "Search the user's Logos library catalog for owned resources by type, author, or keyword. At least one of query, type, or author is required.",
     {
-      type: z.string().optional().describe("Filter by resource type (e.g., 'commentary', 'lexicon', 'theology', 'dictionary')"),
-      query: z.string().optional().describe("Search titles, descriptions, and subjects"),
-      author: z.string().optional().describe("Filter by author name"),
+      type: z.string().optional().describe("Filter by resource type (e.g., 'commentary', 'lexicon', 'theology', 'dictionary'). Provide at least one of type, query, or author."),
+      query: z.string().optional().describe("Search titles, descriptions, and subjects. Provide at least one of query, type, or author."),
+      author: z.string().optional().describe("Filter by author name. Provide at least one of author, query, or type."),
       limit: z.number().optional().describe("Max results to return (default: 25)"),
     },
     async ({ type, query, author, limit }) => {
+      const normalizedType = type?.trim() || undefined;
+      const normalizedQuery = query?.trim() || undefined;
+      const normalizedAuthor = author?.trim() || undefined;
+
+      if (!normalizedType && !normalizedQuery && !normalizedAuthor) {
+        return err("get_library_catalog requires at least one non-empty filter: query, type, or author.");
+      }
+
       try {
-        const resources = searchCatalog({ type, query, author, limit: limit ?? 25 });
+        const resources = searchCatalog({
+          type: normalizedType,
+          query: normalizedQuery,
+          author: normalizedAuthor,
+          limit: limit ?? 25,
+        });
         if (resources.length === 0) return text("No matching resources found in library catalog.");
         const lines = resources.map((r) => {
           const authorStr = r.authors ? ` — ${r.authors}` : "";
@@ -293,10 +307,10 @@ async function main() {
   // ── 14. open_resource ─────────────────────────────────────────────────────
   server.tool(
     "open_resource",
-    "Open a specific resource (commentary, lexicon, etc.) in Logos, optionally at a Bible passage",
+    "Open a specific resource (commentary, lexicon, etc.) in Logos, optionally at a reference. Use get_resource_references first to discover what reference types a resource supports, then provide the reference in Logos format (e.g., 'bible.24.1.1' for Jeremiah 1:1, 'page.271' for page 271, 'vnp.144.575.253' for journal vol/num/page).",
     {
       resource_id: z.string().describe("Resource ID from the library catalog (e.g., 'LLS:CLVNCOMM')"),
-      reference: z.string().optional().describe("Bible reference to navigate to within the resource (e.g., 'Romans 12:1')"),
+      reference: z.string().optional().describe("Reference in Logos milestone format (e.g., 'bible.24.1.1', 'page.271'). Use get_resource_references to discover valid types for this resource."),
     },
     async ({ resource_id, reference }) => {
       const result = await openResource(resource_id, reference);
@@ -411,13 +425,108 @@ async function main() {
       }
     }
   );
+  // ── 21. get_resource_references ──────────────────────────────────────────────
+  server.tool(
+    "get_resource_references",
+    "Get the available reference/navigation types for a Logos resource. Returns the milestone indexes (e.g., bible, page, vnp) that the resource supports, so you know how to format references when opening it with open_resource.",
+    {
+      resource_id: z.string().describe("Resource ID (e.g., 'LLS:NICOT24GOLDINGAY')"),
+    },
+    async ({ resource_id }) => {
+      try {
+        const info = getResourceReferenceInfo(resource_id);
+        if (!info) return err(`Resource not found: ${resource_id}`);
 
+        const sections: string[] = [];
+        sections.push(`**${info.title}** (\`${info.resourceId}\`)\nType: ${typeLabel(info.type)}`);
+
+        if (info.milestones.length > 0) {
+          const refMilestones = info.milestones.filter((m) => m.category === "Reference");
+          const headwordMilestones = info.milestones.filter((m) => m.category === "Headword");
+
+          if (refMilestones.length > 0) {
+            sections.push("## Reference Types\n" + refMilestones.map((m) => {
+              let desc = `- **${m.type}** (priority: ${m.priority})`;
+              if (m.type.startsWith("bible")) desc += " — Bible verse references (e.g., bible.24.1.1 for Jeremiah 1:1)";
+              else if (m.type === "page") desc += " — Page numbers (e.g., page.271)";
+              else if (m.type === "vnp") desc += " — Volume/Number/Page (e.g., vnp.31.4.410)";
+              else if (m.type === "vp") desc += " — Volume/Page (e.g., vp.26.384)";
+              else if (m.type === "dayofyear") desc += " — Day of year (e.g., dayofyear.3.15.1 for March 15)";
+              else if (m.type === "biblio") desc += " — Bibliographic references";
+              else if (m.type.startsWith("au+")) desc += ` — Author-work references (e.g., ${m.type}.XXXX.XXX.X)`;
+              return desc;
+            }).join("\n"));
+          }
+
+          if (headwordMilestones.length > 0) {
+            sections.push("## Headword Indexes\n" + headwordMilestones.map(
+              (m) => `- **${m.type}** (priority: ${m.priority})`
+            ).join("\n"));
+          }
+        } else {
+          sections.push("This resource has no indexed reference types.");
+        }
+
+        if (info.referenceSupersets) {
+          sections.push(`## Coverage\n\`${info.referenceSupersets}\``);
+        }
+
+        sections.push("## Usage\nUse the reference type as a prefix when calling open_resource, e.g.:\n" +
+          "`open_resource(resource_id, 'page.271')` or `open_resource(resource_id, 'bible.24.1.1')`");
+
+        return text(sections.join("\n\n"));
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        return err(`Error getting resource references: ${msg}`);
+      }
+    }
+  );
+
+  // ── 22. get_resource_text ────────────────────────────────────────────────
+  server.tool(
+    "get_resource_text",
+    "[EXPERIMENTAL] Read the visible text from a resource panel open in Logos Bible Software (Windows only). " +
+    "This is a makeshift workaround: Logos resource files are encrypted and there is no official API for reading resource content, so this tool uses the Windows UI Automation accessibility API to scrape whatever text is currently rendered on screen. " +
+    "Limitations: Windows only, captures only visible/rendered text (~2000 chars per page), scrolling brings Logos to the foreground and sends keystrokes, no text structure or formatting is preserved. " +
+    "Usage: first call open_resource to navigate to the desired section, then call this tool to read the text. " +
+    "Set max_pages > 1 to scroll through and collect additional pages of content.",
+    {
+      tab_name: z.string().optional().describe("Partial tab/resource name to match (e.g., 'Guide for the Perplexed'). If omitted, reads the first available document panel."),
+      max_pages: z.number().optional().describe("Number of pages to read (default: 1 = visible text only, max: 50). Values > 1 will bring Logos to the foreground and scroll through the document."),
+    },
+    async ({ tab_name, max_pages }) => {
+      try {
+        const result = await readResourceText(tab_name, max_pages);
+        const header = `**${result.tabName}** (${result.charCount} chars, ${result.pageCount} page${result.pageCount === 1 ? "" : "s"})`;
+        return text(`${header}\n\n${result.text}`);
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        return err(`Failed to read resource text: ${msg}`);
+      }
+    }
+  );
   // ── Start server ─────────────────────────────────────────────────────────
+}
+
+export function createServer(): McpServer {
+  const server = new McpServer({ name: SERVER_NAME, version: SERVER_VERSION });
+  registerTools(server);
+  return server;
+}
+
+async function main() {
+  const server = createServer();
   const transport = new StdioServerTransport();
   await server.connect(transport);
 }
 
-main().catch((err) => {
-  console.error("Fatal error:", err);
-  process.exit(1);
-});
+const isDirectRun = process.argv[1]
+  ? import.meta.url === pathToFileURL(process.argv[1]).href
+  : false;
+
+if (isDirectRun) {
+  main().catch((err) => {
+    console.error("Fatal error:", err);
+    process.exit(1);
+  });
+}

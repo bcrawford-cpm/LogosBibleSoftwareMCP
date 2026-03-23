@@ -1,32 +1,70 @@
-import { homedir } from "os";
+import { existsSync, readdirSync } from "fs";
+import { homedir, platform } from "os";
 import { join } from "path";
 
 // ─── Logos Data Paths ────────────────────────────────────────────────────────
 
-const LOGOS_BASE = join(
-  homedir(),
-  "Library",
-  "Application Support",
-  "Logos4",
-  "Documents",
-  "a3wo155q.w14"
-);
+function getLogosBaseDir(subdir: "Documents" | "Data"): string {
+  let base: string;
+  if (platform() === "win32") {
+    const localAppData =
+      process.env.LOCALAPPDATA ?? join(homedir(), "AppData", "Local");
+    base = join(localAppData, "Logos", subdir);
+  } else {
+    base = join(homedir(), "Library", "Application Support", "Logos4", subdir);
+  }
+
+  return base;
+}
+
+/**
+ * Resolve the platform-specific Logos base directory for Documents or Data,
+ * then auto-discover the user-specific hash folder inside it.
+ *
+ *   macOS:   ~/Library/Application Support/Logos4/{subdir}/{hash}
+ *   Windows: %LOCALAPPDATA%\Logos\{subdir}\{hash}
+ */
+function resolveLogosDir(
+  subdir: "Documents" | "Data",
+  validationPath: string,
+  envVarName: "LOGOS_DATA_DIR" | "LOGOS_CATALOG_DIR"
+): string {
+  const base = getLogosBaseDir(subdir);
+  const entries = readdirSync(base, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory());
+
+  if (entries.length === 0) {
+    throw new Error(
+      `No Logos user folders found in ${base}. Set ${envVarName} to the correct path.`
+    );
+  }
+
+  if (entries.length === 1) {
+    return join(base, entries[0].name);
+  }
+
+  const matches = entries.filter((entry) =>
+    existsSync(join(base, entry.name, validationPath))
+  );
+
+  if (matches.length === 1) {
+    return join(base, matches[0].name);
+  }
+
+  throw new Error(
+    `Could not uniquely determine the Logos ${subdir} folder in ${base}. ` +
+    `Set ${envVarName} to the correct path.`
+  );
+}
 
 export const LOGOS_DATA_DIR =
-  process.env.LOGOS_DATA_DIR ?? LOGOS_BASE;
+  process.env.LOGOS_DATA_DIR ??
+  resolveLogosDir("Documents", join("VisualMarkup", "visualmarkup.db"), "LOGOS_DATA_DIR");
 
 // Catalog DB lives under Data/ (not Documents/)
-const LOGOS_CATALOG_BASE = join(
-  homedir(),
-  "Library",
-  "Application Support",
-  "Logos4",
-  "Data",
-  "a3wo155q.w14"
-);
-
 export const LOGOS_CATALOG_DIR =
-  process.env.LOGOS_CATALOG_DIR ?? LOGOS_CATALOG_BASE;
+  process.env.LOGOS_CATALOG_DIR ??
+  resolveLogosDir("Data", join("LibraryCatalog", "catalog.db"), "LOGOS_CATALOG_DIR");
 
 export const DB_PATHS = {
   visualMarkup: join(LOGOS_DATA_DIR, "VisualMarkup", "visualmarkup.db"),

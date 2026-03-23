@@ -4,11 +4,14 @@ import type { ToolResult } from "../types.js";
 
 export const navigatePassageTool = {
   name: "navigate_passage",
-  description: "Open a Bible passage in the Logos Bible Software UI. Provide a reference like 'Genesis 1:1' or 'Romans 8:28-30'.",
+  description: "Open a Bible passage in the Logos Bible Software UI. Use standard Bible reference formats like 'Genesis 1:1' or 'Romans 8:28-30'. For non-Bible resources, use open_resource with get_resource_references instead.",
   inputSchema: {
     type: "object" as const,
     properties: {
-      reference: { type: "string", description: "Bible reference (e.g., 'Genesis 1:1', 'John 3:16-17')" },
+      reference: { 
+        type: "string", 
+        description: "Bible reference to navigate to (e.g., 'Genesis 1:1', 'Romans 8:28-30')." 
+      },
     },
     required: ["reference"],
   },

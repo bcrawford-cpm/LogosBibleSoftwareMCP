@@ -2,7 +2,7 @@ import Database from "better-sqlite3";
 import { existsSync } from "fs";
 import { DB_PATHS } from "../config.js";
 import { stripXml } from "../utils/strip-markup.js";
-import type { CatalogResource, ResourceTypeSummary } from "../types.js";
+import type { CatalogResource, ResourceTypeSummary, ResourceMilestone, ResourceReferenceInfo } from "../types.js";
 
 function openDb(path: string): Database.Database {
   if (!existsSync(path)) {
@@ -164,6 +164,50 @@ export function searchCatalog(options: {
       description: stripXml(r.Description),
       publicationDate: r.PublicationDate,
     }));
+  } finally {
+    db.close();
+  }
+}
+
+// ─── Resource Reference Info ────────────────────────────────────────────────
+
+function parseMilestoneIndexes(raw: string | null): ResourceMilestone[] {
+  if (!raw) return [];
+  // Format: "Reference;bible;1000\tReference;page;1000\tHeadword;en;1000"
+  return raw.split(/\t+/).filter(Boolean).map((entry) => {
+    const parts = entry.trim().split(";");
+    return {
+      category: (parts[0] ?? "Reference") as "Reference" | "Headword",
+      type: parts[1] ?? "",
+      priority: parseInt(parts[2] ?? "0", 10),
+    };
+  });
+}
+
+export function getResourceReferenceInfo(resourceId: string): ResourceReferenceInfo | null {
+  const db = openDb(DB_PATHS.catalog);
+  try {
+    const row = db.prepare(`
+      SELECT ResourceId, Title, Type, MilestoneIndexes, ReferenceSupersets
+      FROM Records
+      WHERE ResourceId = ? AND Availability >= 1
+    `).get(resourceId) as {
+      ResourceId: string;
+      Title: string;
+      Type: string;
+      MilestoneIndexes: string | null;
+      ReferenceSupersets: string | null;
+    } | undefined;
+
+    if (!row) return null;
+
+    return {
+      resourceId: row.ResourceId,
+      title: row.Title,
+      type: row.Type,
+      milestones: parseMilestoneIndexes(row.MilestoneIndexes),
+      referenceSupersets: row.ReferenceSupersets,
+    };
   } finally {
     db.close();
   }
